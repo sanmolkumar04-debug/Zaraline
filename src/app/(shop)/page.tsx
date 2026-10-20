@@ -73,8 +73,8 @@ export default async function Home() {
         <ProductGrid items={spotlight} />
       </Section>
 
-      <Link href={collectionHref(cols["NEW ARRIVAL"])} className="block py-6">
-        <img src="/img/poster/NEW COLLECTION/6d2248-c43d6c-1e7f7a-23407a-patola.svg" alt="New collection" className="aspect-[20/7] w-full object-cover" />
+      <Link href={collectionHref(cols["NEW ARRIVAL"])} className="container-x block py-6">
+        <img src="/media/banners/1.webp" alt="New collection" className="mx-auto h-auto w-full max-w-[900px]" />
       </Link>
 
       <Section title="ALL PRODUCTS" viewAll="/search">
