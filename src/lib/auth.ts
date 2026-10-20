@@ -56,6 +56,12 @@ function twilio() {
   return sid && token && service ? { sid, token, service } : null;
 }
 
+// Direct SendGrid email: we generate and hash the code ourselves, so no Twilio is needed.
+function sendgrid() {
+  const key = process.env.SENDGRID_API_KEY?.trim(), from = process.env.SENDGRID_FROM_EMAIL?.trim();
+  return key && from ? { key, from } : null;
+}
+
 async function twilioVerify(path: "Verifications" | "VerificationCheck", email: string, extra: Record<string, string> = {}) {
   const t = twilio()!;
   const res = await fetch(`https://verify.twilio.com/v2/Services/${t.service}/${path}`, {
@@ -82,9 +88,27 @@ export async function issueOtp(email: string) {
     if (status >= 400) throw new HttpError(502, "Could not send OTP. Please try again.");
     return null;
   }
-  if (process.env.NODE_ENV === "production") throw new Error("OTP email is not configured (set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SID)");
+  const mail = sendgrid();
+  if (!mail && process.env.NODE_ENV === "production") throw new Error("OTP email is not configured (set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL, or TWILIO_*)");
   const code = String(crypto.randomInt(100000, 1000000));
   await db.otpCode.create({ data: { email, codeHash: hashOtp(email, code), expiresAt } });
+  if (mail) {
+    const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${mail.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email }] }],
+        from: { email: mail.from, name: "Zari Lane" },
+        subject: `Your Zari Lane login code: ${code}`,
+        content: [{ type: "text/plain", value: `Your Zari Lane verification code is ${code}. It expires in 5 minutes.` }],
+      }),
+    });
+    if (!res.ok) {
+      console.error("[sendgrid] send failed", res.status, await res.text().catch(() => ""));
+      throw new HttpError(502, "Could not send OTP. Please try again.");
+    }
+    return null;
+  }
   console.log(`[otp] ${email}: ${code}`);
   return code;
 }
