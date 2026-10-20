@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import type { CartView } from "@/lib/cart";
 import { inr } from "@/lib/format";
-import { PARTIAL_ADVANCE, type PayMethod } from "@/lib/pricing";
+import { COD_DELIVERY_FEE, PARTIAL_ADVANCE, type PayMethod } from "@/lib/pricing";
 import { AddressForm, type Address } from "./AddressForm";
 import { Icon } from "./Icon";
 import { LoginForm } from "./Login";
@@ -135,7 +135,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
         return;
       }
       const out = await pay({ orderId: r.orderId, number: r.number, payment: r.payment, prefill: r.prefill });
-      if (out.result === "submitted") { await refresh(); router.replace(`/orders/${out.orderId}?submitted=1`); return; }
+      if (out.result === "paid") { await refresh(); router.replace(`/orders/${out.orderId}?placed=1`); return; }
       setNotice({ kind: "info", text: "Payment cancelled. Your bag is saved — you can try again whenever you're ready." });
       setPlacing(false);
     } catch (e) {
@@ -157,7 +157,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
     );
 
   const eligible = coupons.map((c) => ({ ...c, eligible: !!cart && cart.subtotal >= c.minAmount && cart.qty >= c.minQty }));
-  const payLabel = !cart ? "" : method === "COD" ? `Place Order · ${inr(cart.total)}` : `Pay ${inr(cart.payNow)}`;
+  const payLabel = !cart ? "" : `Pay ${inr(cart.payNow)}`;
 
   return (
     <>
@@ -245,7 +245,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
                   {([
                     ["ONLINE", "Pay Online", "Pay by scanning a UPI QR code", "Extra 20% off"],
                     ["PARTIAL", `Pay ${inr(PARTIAL_ADVANCE)} now, rest on delivery`, "Pay a small advance online, balance in cash", "Extra ₹50 off"],
-                    ["COD", "Cash on Delivery", "Pay in cash when your order arrives", null],
+                    ["COD", "Cash on Delivery", `Pay ${inr(COD_DELIVERY_FEE)} delivery charge online, rest in cash on delivery`, null],
                   ] as const).map(([m, t, d, badge]) => (
                     <label key={m} className={`flex cursor-pointer items-center gap-3 border p-3 ${method === m ? "border-ink" : "border-line"}`}>
                       <input type="radio" name="method" checked={method === m} onChange={() => setMethod(m)} className="accent-black" />
@@ -271,7 +271,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
                   {cart.payment > 0 && <div className="flex justify-between"><dt>{method === "ONLINE" ? "Online payment discount" : "Advance payment discount"}</dt><dd className="text-offer">-{inr(cart.payment)}</dd></div>}
                   <div className="flex justify-between"><dt>Delivery Fee</dt><dd>{cart.shipping ? inr(cart.shipping) : <span className="text-offer">FREE</span>}</dd></div>
                   <div className="flex justify-between border-t border-[#ddd] pt-3 text-[16px] font-bold"><dt>Order Total</dt><dd>{inr(cart.total)}</dd></div>
-                  {method === "PARTIAL" && <>
+                  {method !== "ONLINE" && <>
                     <div className="flex justify-between text-[13px]"><dt>Pay now (online)</dt><dd className="font-bold">{inr(cart.payNow)}</dd></div>
                     <div className="flex justify-between text-[13px]"><dt>Pay on delivery</dt><dd className="font-bold">{inr(cart.payOnDelivery)}</dd></div>
                   </>}

@@ -94,7 +94,7 @@ export function RetryPayment({ orderId }: { orderId: string }) {
     try {
       const r = await http<PayOrder>("/api/payments/retry", { method: "POST", json: { orderId } });
       const out = await pay(r);
-      if (out.result === "submitted") { await refresh(); location.replace(`/orders/${orderId}?submitted=1`); return; }
+      if (out.result === "paid") { await refresh(); location.replace(`/orders/${orderId}?placed=1`); return; }
       setMsg("Payment cancelled.");
       router.refresh();
     } catch (e) { setMsg((e as Error).message); }

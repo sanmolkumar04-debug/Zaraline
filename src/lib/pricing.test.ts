@@ -13,10 +13,17 @@ test("online payment: 20% capped at 150 (reference: 1799 -> 1649)", () => {
 
 test("coupon eligibility and cap", () => {
   assert.match(couponError(SALE10, 1799, 1)!, /Add 1 more item/);
-  const t = totals([{ price: 1799, mrp: 4499, qty: 2 }], { coupon: SALE10, method: "COD", shippingFee: 149 });
+  const t = totals([{ price: 1799, mrp: 4499, qty: 2 }], { coupon: SALE10, method: "COD", shippingFee: 0 });
   assert.equal(t.coupon, 200); // 10% of 3598 = 359 -> capped 200
-  assert.equal(t.total, 3598 - 200 + 149);
-  assert.equal(t.payNow, 0);
+  assert.equal(t.total, 3598 - 200 + 199);
+});
+
+test("cash on delivery: 199 delivery charge is paid online, the rest on delivery", () => {
+  const t = totals([{ price: 1299, mrp: 4599, qty: 1 }], { method: "COD" });
+  assert.equal(t.shipping, 199);
+  assert.equal(t.total, 1299 + 199);
+  assert.equal(t.payNow, 199);
+  assert.equal(t.payOnDelivery, 1299);
 });
 
 test("partial: 50 off, 149 advance", () => {

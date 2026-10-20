@@ -1,14 +1,13 @@
 import { z } from "zod";
 import { api, body } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
-import { submitPaymentProof } from "@/lib/orders";
+import { submitPaymentScreenshot } from "@/lib/orders";
 
-// UPI reference numbers (UTR) are 12 digits.
-const Input = z.object({ order_id: z.string(), utr: z.string().trim().regex(/^\d{12}$/, "Enter the 12-digit UPI transaction ID") });
+const Input = z.object({ order_id: z.string(), image: z.string().max(1_600_000) });
 
 export const POST = api(async (req) => {
   const u = await requireUser();
   const r = Input.parse(await body(req));
-  const order = await submitPaymentProof(r.order_id, u.id, r.utr);
-  return { orderId: order.id };
+  const order = await submitPaymentScreenshot(r.order_id, u.id, r.image);
+  return { orderId: order.id, status: order.status };
 });

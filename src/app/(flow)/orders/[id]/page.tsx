@@ -12,7 +12,7 @@ import { ORDER_STEPS, STATUS_LABEL } from "@/lib/orders";
 export const metadata: Metadata = { title: "Order Details", robots: { index: false } };
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ placed?: string; payment?: string; submitted?: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ placed?: string; payment?: string }> };
 
 export default async function OrderPage({ params, searchParams }: Props) {
   const user = await currentUser();
@@ -25,13 +25,12 @@ export default async function OrderPage({ params, searchParams }: Props) {
   });
   if (!o) notFound();
   const a = JSON.parse(o.address) as Record<string, string>;
-  const submitted = o.payments.some((p) => p.status === "CREATED" && p.gatewayPaymentId);
   const unpaid = o.status === "PENDING_PAYMENT" || o.status === "PAYMENT_FAILED";
   const lastError = o.payments.find((p) => p.status === "FAILED" || p.status === "CANCELLED")?.error;
   const idx = (s: string) => (ORDER_STEPS as readonly string[]).indexOf(s);
   const reached = (s: string) => idx(o.status) >= idx(s);
   const eventAt = (s: string) => o.events.find((e) => e.status === s)?.createdAt;
-  const methodLabel = o.paymentMethod === "COD" ? "Cash on Delivery" : o.paymentMethod === "PARTIAL" ? "Advance + COD" : "Online (UPI QR)";
+  const methodLabel = o.paymentMethod === "COD" ? "Cash on Delivery (delivery charge paid online)" : o.paymentMethod === "PARTIAL" ? "Advance + COD" : "Online (UPI QR)";
 
   return (
     <>
@@ -43,7 +42,7 @@ export default async function OrderPage({ params, searchParams }: Props) {
             <h1 className="mt-4 text-[22px] font-bold">Order Placed Successfully!</h1>
             <p className="mt-1 text-[14px]">Thank you for shopping with Zari Lane. Your order <b>#{o.number}</b> has been confirmed.</p>
             <p className="mt-1 text-[13px] text-muted">
-              {o.paymentMethod === "COD" ? `Please keep ${inr(o.total)} ready at the time of delivery.`
+              {o.paymentMethod === "COD" ? `Delivery charge of ${inr(o.payNow)} paid online. Please keep ${inr(o.payOnDelivery)} ready at the time of delivery.`
                 : o.paymentMethod === "PARTIAL" ? `${inr(o.payNow)} paid online. Pay ${inr(o.payOnDelivery)} on delivery.`
                 : `Payment of ${inr(o.payNow)} received.`}
             </p>
@@ -52,13 +51,12 @@ export default async function OrderPage({ params, searchParams }: Props) {
         {unpaid && (
           <div className="mb-6 border border-[#f5c2c0] bg-[#fdecea] p-6 text-center">
             <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#d93025] text-white"><Icon name="close" size={30} stroke={3} /></span>
-            <h1 className="mt-4 text-[22px] font-bold">{submitted ? "Payment Under Verification" : o.status === "PAYMENT_FAILED" ? "Payment Failed" : "Payment Pending"}</h1>
+            <h1 className="mt-4 text-[22px] font-bold">{o.status === "PAYMENT_FAILED" ? "Payment Failed" : "Payment Pending"}</h1>
             <p className="mt-1 text-[14px]">
-              {submitted ? "We have received your transaction ID and will confirm your order as soon as the payment is verified, usually within a few hours."
-                : o.status === "PAYMENT_FAILED" ? (lastError ?? "Your payment could not be completed.") : "We have not received your payment yet."}
+              {o.status === "PAYMENT_FAILED" ? (lastError ?? "Your payment could not be completed.") : "We have not received your payment yet. Pay with the UPI QR and upload your screenshot to confirm the order."}
             </p>
             <div className="mt-5 flex flex-col items-center gap-2">
-              {submitted ? null : <RetryPayment orderId={o.id} />}
+              <RetryPayment orderId={o.id} />
               <Link href="/bag" className="text-[13px] font-semibold underline">Back to bag</Link>
             </div>
           </div>

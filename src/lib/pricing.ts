@@ -8,6 +8,7 @@ export const ONLINE_OFF_PCT = 20;
 export const ONLINE_OFF_MAX = 150;
 export const PARTIAL_OFF = 50;
 export const PARTIAL_ADVANCE = 149;
+export const COD_DELIVERY_FEE = 199; // Cash on Delivery orders pay this delivery charge online, up front.
 
 export function onlineDiscount(amount: number) {
   return Math.min(Math.floor((amount * ONLINE_OFF_PCT) / 100), ONLINE_OFF_MAX);
@@ -49,8 +50,8 @@ export function totals(lines: Line[], opts: { coupon?: CouponRule | null; method
   const bogo = bogoDiscount(lines);
   const coupon = couponDiscount(opts.coupon ?? null, subtotal, qty, subtotal - bogo);
   const payment = opts.method ? paymentDiscount(opts.method, subtotal - bogo - coupon) : 0;
-  const shipping = opts.shippingFee ?? 0;
+  const shipping = (opts.shippingFee ?? 0) + (opts.method === "COD" ? COD_DELIVERY_FEE : 0);
   const total = subtotal - bogo - coupon - payment + shipping;
-  const payNow = opts.method === "ONLINE" ? total : opts.method === "PARTIAL" ? Math.min(PARTIAL_ADVANCE, total) : 0;
+  const payNow = opts.method === "ONLINE" ? total : opts.method === "PARTIAL" ? Math.min(PARTIAL_ADVANCE, total) : opts.method === "COD" ? Math.min(COD_DELIVERY_FEE, total) : 0;
   return { subtotal, mrpTotal, qty, saving: mrpTotal - subtotal, bogo, coupon, payment, shipping, total, payNow, payOnDelivery: total - payNow };
 }

@@ -194,6 +194,7 @@ model Payment {
   gatewayPaymentId  String?  @unique @map("razorpayPaymentId")
   sessionId         String? // which UPI QR code ("1" | "2") this attempt shows
   error             String?
+  proof             String? // payment screenshot (JPEG data URL) uploaded by the customer
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }

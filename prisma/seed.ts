@@ -160,7 +160,6 @@ async function main() {
   await db.shippingMethod.createMany({
     data: [
       { id: "standard", name: "Standard Delivery", eta: "Get it delivered in 3-7 days", price: 0, sort: 0 },
-      { id: "express", name: "Express Delivery", eta: "Get it delivered in 1-3 days", price: 149, sort: 1 },
     ],
   });
 

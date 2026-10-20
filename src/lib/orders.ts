@@ -43,10 +43,10 @@ export async function createCheckoutOrder(userId: string, input: { addressId: st
       data: {
         number: orderNumber(), userId, status: online ? "PENDING_PAYMENT" : "CONFIRMED", paymentMethod: input.method,
         subtotal: v.subtotal, mrpTotal: v.mrpTotal, couponCode: v.couponCode, offerDiscount: v.bogo, couponDiscount: v.coupon, paymentDiscount: v.payment,
-        shippingMethod: ship.name, shippingFee: ship.price, total: v.total, payNow: v.payNow, payOnDelivery: v.payOnDelivery,
+        shippingMethod: ship.name, shippingFee: v.shipping, total: v.total, payNow: v.payNow, payOnDelivery: v.payOnDelivery,
         address: snapshot, cartHash, idempotencyKey: input.idempotencyKey,
         items: { create: v.items.map((i) => ({ variantId: i.variantId, name: i.name, size: i.size, image: i.image, price: i.price, mrp: i.mrp, qty: i.qty })) },
-        events: { create: { status: online ? "PENDING_PAYMENT" : "CONFIRMED", note: online ? "Awaiting payment" : "Order placed (Cash on Delivery)" } },
+        events: { create: { status: online ? "PENDING_PAYMENT" : "CONFIRMED", note: "Awaiting payment" } },
       },
     });
     if (!online) await confirmStockAndClearCart(tx, o.id, userId);
@@ -75,21 +75,17 @@ export async function newPaymentAttempt(orderId: string) {
   return db.payment.create({ data: { orderId: o.id, provider: "upi_qr", amount: o.payNow * 100, status: "CREATED", gatewayOrderId: `${o.number}_${crypto.randomBytes(4).toString("hex")}`, sessionId: String(qr) } });
 }
 
-/** Customer says they paid and gives the UPI transaction id; the order stays pending until an admin confirms it. */
-export async function submitPaymentProof(gatewayOrderId: string, userId: string, utr: string) {
+const MAX_PROOF_CHARS = 1_500_000;
+
+/** Customer uploads a screenshot of the UPI payment; the order is approved right away and the screenshot is kept for admin review. */
+export async function submitPaymentScreenshot(gatewayOrderId: string, userId: string, image: string) {
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(image);
+  if (!m || image.length > MAX_PROOF_CHARS || Buffer.from(m[1].slice(0, 8), "base64")[0] !== 0xff) throw new HttpError(400, "Please upload a valid screenshot image");
   const pay = await db.payment.findUnique({ where: { gatewayOrderId }, include: { order: true } });
   if (!pay || pay.order.userId !== userId) throw new HttpError(404, "Payment not found");
   if (pay.status !== "CREATED" || pay.order.status !== "PENDING_PAYMENT") throw new HttpError(409, "This payment can no longer be submitted");
-  try {
-    await db.$transaction([
-      db.payment.update({ where: { id: pay.id }, data: { gatewayPaymentId: utr } }),
-      db.orderEvent.create({ data: { orderId: pay.orderId, status: "PENDING_PAYMENT", note: `Payment submitted (UPI ref ${utr}), awaiting confirmation` } }),
-    ]);
-  } catch (e) {
-    if ((e as { code?: string }).code === "P2002") throw new HttpError(409, "This transaction ID has already been used");
-    throw e;
-  }
-  return pay.order;
+  await db.payment.update({ where: { id: pay.id }, data: { proof: image } });
+  return markPaid(gatewayOrderId, "ss_" + crypto.randomBytes(8).toString("hex"));
 }
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
@@ -117,7 +113,7 @@ export async function markPaid(gatewayOrderId: string, gatewayPaymentId: string,
     await tx.payment.update({ where: { id: pay.id }, data: { status: "PAID", gatewayPaymentId, error: null } });
     // Close any other open attempts for this order.
     await tx.payment.updateMany({ where: { orderId: pay.orderId, status: "CREATED" }, data: { status: "CANCELLED" } });
-    const note = pay.order.paymentMethod === "PARTIAL" ? `Advance of ₹${pay.order.payNow} paid online` : "Payment received";
+    const note = pay.order.paymentMethod === "PARTIAL" ? `Advance of ₹${pay.order.payNow} paid online` : pay.order.paymentMethod === "COD" ? `Delivery charge of ₹${pay.order.payNow} paid online` : "Payment received";
     const order = await tx.order.update({
       where: { id: pay.orderId },
       data: { status: "CONFIRMED", events: { create: [{ status: "PAID", note }, { status: "CONFIRMED", note: "Order confirmed" }] } },

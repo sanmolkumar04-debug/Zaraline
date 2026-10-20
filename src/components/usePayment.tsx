@@ -7,37 +7,60 @@ import { http } from "./Store";
 
 // `sessionId` carries which of the two UPI QR codes ("1" | "2") this attempt shows.
 export type PayOrder = { orderId: string; number: string; payment: { gatewayOrderId: string; sessionId: string; amount: number }; prefill: { email: string; name: string } };
-export type Outcome = { result: "submitted" | "cancelled"; orderId: string };
+export type Outcome = { result: "paid" | "cancelled"; orderId: string };
 
-/** Shows the UPI QR and resolves once the customer submits their transaction id, or closes the dialog. */
+/** Shows the UPI QR and resolves once the customer uploads a payment screenshot (the order is then approved), or closes the dialog. */
 export function usePayment() {
   const [open, setOpen] = useState<{ order: PayOrder; resolve: (o: Outcome) => void } | null>(null);
 
   const pay = useCallback((order: PayOrder) => new Promise<Outcome>((resolve) => setOpen({ order, resolve })), []);
 
-  const finish = async (kind: "submitted" | "dismiss") => {
+  const finish = async (kind: "paid" | "dismiss") => {
     if (!open) return;
     const { order, resolve } = open;
     setOpen(null);
     if (kind === "dismiss")
       await http("/api/payments/failed", { method: "POST", json: { order_id: order.payment.gatewayOrderId, reason: "CANCELLED", error: "Payment cancelled by user" } }).catch(() => {});
-    resolve({ result: kind === "submitted" ? "submitted" : "cancelled", orderId: order.orderId });
+    resolve({ result: kind === "paid" ? "paid" : "cancelled", orderId: order.orderId });
   };
 
   const modal = open && <QrCheckout order={open.order} onFinish={finish} />;
   return { pay, modal };
 }
 
-function QrCheckout({ order, onFinish }: { order: PayOrder; onFinish: (k: "submitted" | "dismiss") => void }) {
-  const [utr, setUtr] = useState("");
+/** Shrinks a screenshot to a ~1000px JPEG so it stays small enough to upload and store. */
+function toJpeg(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, 1000 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Please choose an image file")); };
+    img.src = url;
+  });
+}
+
+function QrCheckout({ order, onFinish }: { order: PayOrder; onFinish: (k: "paid" | "dismiss") => void }) {
+  const [shot, setShot] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const pick = async (f?: File) => {
+    if (!f) return;
+    setErr("");
+    try { setShot(await toJpeg(f)); } catch (e) { setShot(null); setErr((e as Error).message); }
+  };
   const submit = async () => {
-    if (!/^\d{12}$/.test(utr)) return setErr("Enter the 12-digit UPI transaction ID");
+    if (!shot) return setErr("Please upload your payment screenshot");
     setBusy(true); setErr("");
     try {
-      await http("/api/payments/submit", { method: "POST", json: { order_id: order.payment.gatewayOrderId, utr } });
-      onFinish("submitted");
+      await http("/api/payments/submit", { method: "POST", json: { order_id: order.payment.gatewayOrderId, image: shot } });
+      onFinish("paid");
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
   return (
@@ -51,12 +74,13 @@ function QrCheckout({ order, onFinish }: { order: PayOrder; onFinish: (k: "submi
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={`/pay/qr${order.payment.sessionId === "2" ? 2 : 1}.jpeg`} alt="UPI payment QR code" className="mx-auto mt-4 h-[240px] w-[240px] object-contain" />
         <p className="mt-2 text-center text-[12px] text-muted">Scan with Google Pay, PhonePe, Paytm or any UPI app.</p>
-        <label htmlFor="utr" className="mt-4 block text-[13px] font-semibold">UPI transaction ID (12 digits)</label>
-        <input id="utr" inputMode="numeric" maxLength={12} value={utr} onChange={(e) => { setUtr(e.target.value.replace(/\D/g, "")); setErr(""); }}
-          placeholder="e.g. 412345678901" className="mt-1 h-11 w-full rounded border border-[#d5d5d5] px-3 text-[15px]" />
+        <label htmlFor="shot" className="mt-4 block text-[13px] font-semibold">Upload payment screenshot</label>
+        <input id="shot" type="file" accept="image/*" onChange={(e) => pick(e.target.files?.[0])} className="mt-1 block w-full text-[13px]" />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {shot && <img src={shot} alt="Your payment screenshot" className="mt-3 max-h-[160px] rounded border border-line" />}
         {err && <p className="mt-1 text-[12px] text-sale" role="alert">{err}</p>}
-        <button onClick={submit} disabled={busy} className="btn-black mt-4 h-12 w-full text-[15px] normal-case disabled:opacity-60">{busy ? "Submitting…" : "I have paid"}</button>
-        <p className="mt-3 flex items-center gap-1 text-[11px] text-muted"><Icon name="lock" size={14} /> We confirm your payment manually, usually within a few hours.</p>
+        <button onClick={submit} disabled={busy || !shot} className="btn-black mt-4 h-12 w-full text-[15px] normal-case disabled:opacity-60">{busy ? "Submitting…" : "Submit & confirm order"}</button>
+        <p className="mt-3 flex items-center gap-1 text-[11px] text-muted"><Icon name="lock" size={14} /> Your order is confirmed as soon as the screenshot is uploaded.</p>
       </div>
     </div>
   );
