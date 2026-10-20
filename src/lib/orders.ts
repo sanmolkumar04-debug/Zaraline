@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import { db } from "./db";
 import { HttpError } from "./auth";
 import { cartView, getCart } from "./cart";
-import { createCashfreeOrder } from "./cashfree";
 import type { PayMethod } from "./pricing";
 
 const orderNumber = () => "ZL" + Date.now().toString().slice(-8) + crypto.randomInt(10, 99);
@@ -65,15 +64,32 @@ export async function createCheckoutOrder(userId: string, input: { addressId: st
   return db.order.findUniqueOrThrow({ where: { id: order.id }, include: { payments: true } });
 }
 
-/** Creates a fresh Cashfree order for a pending order (first attempt or retry after failure). */
+/** Opens a UPI QR payment attempt for a pending order. The two QR codes (sessionId "1" / "2") are used alternately. */
 export async function newPaymentAttempt(orderId: string) {
   const o = await db.order.findUniqueOrThrow({ where: { id: orderId }, include: { payments: true } });
   if (o.status !== "PENDING_PAYMENT" && o.status !== "PAYMENT_FAILED") throw new HttpError(409, "This order is already " + o.status.toLowerCase().replace("_", " "));
   const open = o.payments.find((p) => p.status === "CREATED");
   if (open) return open;
-  const cf = await createCashfreeOrder(o.number, o.payNow, { id: o.userId, phone: (JSON.parse(o.address) as { phone: string }).phone });
+  const qr = ((await db.payment.count({ where: { provider: "upi_qr" } })) % 2) + 1;
   if (o.status === "PAYMENT_FAILED") await db.order.update({ where: { id: o.id }, data: { status: "PENDING_PAYMENT" } });
-  return db.payment.create({ data: { orderId: o.id, amount: o.payNow * 100, status: "CREATED", gatewayOrderId: cf.id, sessionId: cf.sessionId } });
+  return db.payment.create({ data: { orderId: o.id, provider: "upi_qr", amount: o.payNow * 100, status: "CREATED", gatewayOrderId: `${o.number}_${crypto.randomBytes(4).toString("hex")}`, sessionId: String(qr) } });
+}
+
+/** Customer says they paid and gives the UPI transaction id; the order stays pending until an admin confirms it. */
+export async function submitPaymentProof(gatewayOrderId: string, userId: string, utr: string) {
+  const pay = await db.payment.findUnique({ where: { gatewayOrderId }, include: { order: true } });
+  if (!pay || pay.order.userId !== userId) throw new HttpError(404, "Payment not found");
+  if (pay.status !== "CREATED" || pay.order.status !== "PENDING_PAYMENT") throw new HttpError(409, "This payment can no longer be submitted");
+  try {
+    await db.$transaction([
+      db.payment.update({ where: { id: pay.id }, data: { gatewayPaymentId: utr } }),
+      db.orderEvent.create({ data: { orderId: pay.orderId, status: "PENDING_PAYMENT", note: `Payment submitted (UPI ref ${utr}), awaiting confirmation` } }),
+    ]);
+  } catch (e) {
+    if ((e as { code?: string }).code === "P2002") throw new HttpError(409, "This transaction ID has already been used");
+    throw e;
+  }
+  return pay.order;
 }
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];

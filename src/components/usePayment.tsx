@@ -5,110 +5,58 @@ import { inr } from "@/lib/format";
 import { Icon } from "./Icon";
 import { http } from "./Store";
 
+// `sessionId` carries which of the two UPI QR codes ("1" | "2") this attempt shows.
 export type PayOrder = { orderId: string; number: string; payment: { gatewayOrderId: string; sessionId: string; amount: number }; prefill: { email: string; name: string } };
-export type Gateway = { mode: "cashfree" | "simulator"; env: "sandbox" | "production" };
-export type Outcome = { result: "paid" | "failed" | "cancelled"; orderId: string; error?: string };
+export type Outcome = { result: "submitted" | "cancelled"; orderId: string };
 
-type SimPayment = { order_id: string; payment_id: string; signature: string };
-type CfResult = { error?: { message?: string }; paymentDetails?: unknown };
-type CfInstance = { checkout: (o: { paymentSessionId: string; redirectTarget: "_modal" }) => Promise<CfResult | undefined> };
-declare global { interface Window { Cashfree?: (o: { mode: "sandbox" | "production" }) => CfInstance } }
+/** Shows the UPI QR and resolves once the customer submits their transaction id, or closes the dialog. */
+export function usePayment() {
+  const [open, setOpen] = useState<{ order: PayOrder; resolve: (o: Outcome) => void } | null>(null);
 
-function loadScript() {
-  return new Promise<boolean>((resolve) => {
-    if (window.Cashfree) return resolve(true);
-    const s = document.createElement("script");
-    s.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.body.appendChild(s);
-  });
-}
+  const pay = useCallback((order: PayOrder) => new Promise<Outcome>((resolve) => setOpen({ order, resolve })), []);
 
-/** Opens Cashfree Checkout (or the local simulator) and resolves once the server has verified / recorded the outcome. */
-export function usePayment(gateway: Gateway | null) {
-  const [sim, setSim] = useState<{ order: PayOrder; resolve: (o: Outcome) => void } | null>(null);
-
-  // The server asks Cashfree (or checks the simulator HMAC); the browser's own word is never enough.
-  const verify = (order: PayOrder, sig?: SimPayment) =>
-    http<{ paid: boolean }>("/api/payments/verify", { method: "POST", json: { order_id: order.payment.gatewayOrderId, ...sig } });
-  const report = (order: PayOrder, reason: "FAILED" | "CANCELLED", error: string, paymentId?: string) =>
-    http("/api/payments/failed", { method: "POST", json: { order_id: order.payment.gatewayOrderId, reason, error, payment_id: paymentId } }).catch(() => {});
-
-  const pay = useCallback(async (order: PayOrder): Promise<Outcome> => {
-    if (!gateway) throw new Error("Payment is not available right now");
-    if (gateway.mode === "simulator") return new Promise((resolve) => setSim({ order, resolve }));
-
-    if (!(await loadScript()) || !window.Cashfree) throw new Error("Could not load Cashfree. Please check your connection and try again.");
-    const result = await window.Cashfree({ mode: gateway.env }).checkout({ paymentSessionId: order.payment.sessionId, redirectTarget: "_modal" });
-    try {
-      if ((await verify(order)).paid) return { result: "paid", orderId: order.orderId };
-    } catch (e) {
-      return { result: "failed", orderId: order.orderId, error: (e as Error).message };
-    }
-    const msg = result?.error?.message ?? "";
-    const cancelled = !msg || /abort|clos|cancel|drop/i.test(msg);
-    await report(order, cancelled ? "CANCELLED" : "FAILED", cancelled ? "Payment cancelled by user" : msg);
-    return { result: cancelled ? "cancelled" : "failed", orderId: order.orderId, error: cancelled ? undefined : msg };
-  }, [gateway]);
-
-  const finishSim = async (kind: "success" | "failure" | "dismiss") => {
-    if (!sim) return;
-    const { order, resolve } = sim;
-    setSim(null);
-    if (kind === "dismiss") { await report(order, "CANCELLED", "Payment cancelled by user"); return resolve({ result: "cancelled", orderId: order.orderId }); }
-    try {
-      const r = await http<Partial<SimPayment> & { description?: string; payment_id?: string }>("/api/payments/simulate", { method: "POST", json: { order_id: order.payment.gatewayOrderId, outcome: kind } });
-      if (r.description) { await report(order, "FAILED", r.description, r.payment_id); return resolve({ result: "failed", orderId: order.orderId, error: r.description }); }
-      await verify(order, r as SimPayment);
-      resolve({ result: "paid", orderId: order.orderId });
-    } catch (e) {
-      resolve({ result: "failed", orderId: order.orderId, error: (e as Error).message });
-    }
+  const finish = async (kind: "submitted" | "dismiss") => {
+    if (!open) return;
+    const { order, resolve } = open;
+    setOpen(null);
+    if (kind === "dismiss")
+      await http("/api/payments/failed", { method: "POST", json: { order_id: order.payment.gatewayOrderId, reason: "CANCELLED", error: "Payment cancelled by user" } }).catch(() => {});
+    resolve({ result: kind === "submitted" ? "submitted" : "cancelled", orderId: order.orderId });
   };
 
-  const modal = sim && <SimulatedCheckout order={sim.order} onFinish={finishSim} />;
+  const modal = open && <QrCheckout order={open.order} onFinish={finish} />;
   return { pay, modal };
 }
 
-function SimulatedCheckout({ order, onFinish }: { order: PayOrder; onFinish: (k: "success" | "failure" | "dismiss") => void }) {
-  const [method, setMethod] = useState<string | null>(null);
+function QrCheckout({ order, onFinish }: { order: PayOrder; onFinish: (k: "submitted" | "dismiss") => void }) {
+  const [utr, setUtr] = useState("");
   const [busy, setBusy] = useState(false);
-  const go = (k: "success" | "failure") => { setBusy(true); onFinish(k); };
+  const [err, setErr] = useState("");
+  const submit = async () => {
+    if (!/^\d{12}$/.test(utr)) return setErr("Enter the 12-digit UPI transaction ID");
+    setBusy(true); setErr("");
+    try {
+      await http("/api/payments/submit", { method: "POST", json: { order_id: order.payment.gatewayOrderId, utr } });
+      onFinish("submitted");
+    } catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-3 text-left" role="dialog" aria-modal="true" aria-label="Payment">
-      <div className="anim-fade relative w-full max-w-[720px] overflow-hidden rounded-lg bg-white shadow-2xl md:flex">
-        <div className="bg-[#0b1d3a] p-6 text-white md:w-[260px]">
-          <div className="flex items-center gap-3"><img src="/logo.svg" alt="" className="h-10 w-10 rounded bg-white" /><div><p className="font-semibold">Zari Lane</p><p className="text-[11px] opacity-70">Order #{order.number}</p></div></div>
-          <p className="mt-8 text-[12px] opacity-70">Amount payable</p>
-          <p className="text-[28px] font-bold">{inr(order.payment.amount / 100)}</p>
-          <p className="mt-8 inline-block rounded bg-[#f5a623] px-2 py-1 text-[11px] font-bold text-black">TEST MODE · SIMULATOR</p>
-          <p className="mt-3 text-[11px] leading-4 opacity-70">No Cashfree keys configured. This local simulator issues a signed test payment that the server verifies before confirming the order.</p>
-        </div>
-        <div className="flex-1 p-6">
-          <button aria-label="Close payment" onClick={() => onFinish("dismiss")} className="absolute right-3 top-3 p-1 text-[#555]"><Icon name="close" /></button>
-          {!method ? (
-            <>
-              <p className="text-[15px] font-semibold">Payment Options</p>
-              <ul className="mt-4 space-y-2">
-                {[["UPI", "Google Pay, PhonePe, Paytm & more"], ["Card", "Visa, MasterCard, RuPay"], ["Netbanking", "All Indian banks"], ["Wallet", "PhonePe, Freecharge & more"]].map(([m, d]) => (
-                  <li key={m}><button onClick={() => setMethod(m)} className="flex w-full items-center justify-between rounded border border-[#e3e3e3] px-4 py-3 text-left hover:border-[#0b1d3a]"><span><b className="block text-[14px]">{m}</b><span className="text-[12px] text-muted">{d}</span></span><Icon name="right" size={18} /></button></li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setMethod(null)} className="flex items-center gap-1 text-[13px] font-semibold"><Icon name="back" size={16} />{method}</button>
-              <p className="mt-6 text-[14px]">Simulated bank page. Choose the outcome of this test payment:</p>
-              <div className="mt-6 flex gap-3">
-                <button disabled={busy} onClick={() => go("success")} className="h-11 flex-1 rounded bg-[#1aa34a] text-[14px] font-bold text-white disabled:opacity-60">Success</button>
-                <button disabled={busy} onClick={() => go("failure")} className="h-11 flex-1 rounded bg-[#d93025] text-[14px] font-bold text-white disabled:opacity-60">Failure</button>
-              </div>
-              {busy && <p className="mt-4 text-center text-[12px] text-muted">Processing payment…</p>}
-            </>
-          )}
-          <p className="mt-8 flex items-center gap-1 text-[11px] text-muted"><Icon name="lock" size={14} /> Secured by Cashfree (simulated)</p>
-        </div>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-black/60 p-3 text-left" role="dialog" aria-modal="true" aria-label="Payment">
+      <div className="anim-fade relative my-auto w-full max-w-[420px] rounded-lg bg-white p-6 shadow-2xl">
+        <button aria-label="Close payment" onClick={() => onFinish("dismiss")} className="absolute right-3 top-3 p-1 text-[#555]"><Icon name="close" /></button>
+        <p className="text-[12px] text-muted">Order #{order.number}</p>
+        <p className="text-[15px] font-semibold">Pay using any UPI app</p>
+        <p className="mt-1 text-[28px] font-bold">{inr(order.payment.amount / 100)}</p>
+        <p className="text-[12px] text-sale">Enter exactly this amount when you pay.</p>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`/pay/qr${order.payment.sessionId === "2" ? 2 : 1}.jpeg`} alt="UPI payment QR code" className="mx-auto mt-4 h-[240px] w-[240px] object-contain" />
+        <p className="mt-2 text-center text-[12px] text-muted">Scan with Google Pay, PhonePe, Paytm or any UPI app.</p>
+        <label htmlFor="utr" className="mt-4 block text-[13px] font-semibold">UPI transaction ID (12 digits)</label>
+        <input id="utr" inputMode="numeric" maxLength={12} value={utr} onChange={(e) => { setUtr(e.target.value.replace(/\D/g, "")); setErr(""); }}
+          placeholder="e.g. 412345678901" className="mt-1 h-11 w-full rounded border border-[#d5d5d5] px-3 text-[15px]" />
+        {err && <p className="mt-1 text-[12px] text-sale" role="alert">{err}</p>}
+        <button onClick={submit} disabled={busy} className="btn-black mt-4 h-12 w-full text-[15px] normal-case disabled:opacity-60">{busy ? "Submitting…" : "I have paid"}</button>
+        <p className="mt-3 flex items-center gap-1 text-[11px] text-muted"><Icon name="lock" size={14} /> We confirm your payment manually, usually within a few hours.</p>
       </div>
     </div>
   );

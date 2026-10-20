@@ -1,10 +1,10 @@
 # Zari Lane — e-commerce storefront
 
 Full-stack ethnic-wear store (lehenga cholis, sarees): catalogue, search, filters, variants, bag, coupons,
-email-OTP login, addresses, shipping methods, Cashfree payments (online / advance + COD / COD), Twilio Verify OTP,
+email-OTP login, addresses, shipping methods, UPI QR payments (online / advance + COD / COD), Twilio Verify OTP,
 order confirmation, order tracking and a small admin for order status.
 
-**Stack:** Next.js 15 (App Router) · React 19 · Tailwind CSS 4 · Prisma 6 (SQLite dev / Postgres prod) · Zod · jose (JWT sessions) · Cashfree · Twilio Verify.
+**Stack:** Next.js 15 (App Router) · React 19 · Tailwind CSS 4 · Prisma 6 (SQLite dev / Postgres prod) · Zod · jose (JWT sessions) · SendGrid / Twilio Verify OTP.
 
 ## Quick start
 
@@ -26,27 +26,13 @@ service needs an Email integration (a SendGrid account and verified sender) conf
 Without them, outside production, the OTP is shown under the OTP box ("Dev mode OTP") and printed in the server console as
 `[otp] <email>: <code>`. In production Twilio is required. `ADMIN_EMAILS` addresses can open `/admin`.
 
-## Payments (Cashfree)
+## Payments (UPI QR)
 
-| Mode | When | Behaviour |
-|---|---|---|
-| **Cashfree** | `CASHFREE_APP_ID` + `CASHFREE_SECRET_KEY` set | Real Cashfree Checkout (`CASHFREE_ENV=sandbox` for test keys, `production` for live) |
-| **Simulator** | no keys, `NODE_ENV!=production` (or `PAYMENT_SIMULATOR=true`) | Local checkout modal with Success / Failure; issues an HMAC signature that the server verifies |
-
-Flow: `POST /api/checkout/order` (server re-prices the cart, creates the order + Cashfree order) → Checkout opens →
-`POST /api/payments/verify` asks Cashfree for the order's successful payment (amount must match) → order `CONFIRMED`, stock decremented, bag cleared.
-Failures / dismissals → `POST /api/payments/failed` → order `PAYMENT_FAILED`, retry from the order page (`/api/payments/retry`).
-
-**Webhook** (safety net if the customer closes the tab after paying): Cashfree Dashboard → Developers → Webhooks →
-URL `https://<your-domain>/api/webhooks/cashfree`, events Payment Success, Payment Failed, Payment User Dropped.
-The signature (`x-webhook-signature` over `x-webhook-timestamp + body`, keyed by `CASHFREE_SECRET_KEY`) and amount are verified; processing is idempotent.
-
-Duplicate protection: per-click idempotency key (unique in DB, concurrent duplicates return the same order),
-unpaid orders for an identical cart are reused, and `markPaid` is idempotent across verify + webhook.
-
-Pricing rules (`src/lib/pricing.ts`): Pay Online = extra 20% off (max ₹150); Pay ₹149 advance + rest COD = extra ₹50 off;
-**Buy 2 Get 1 Free** (automatic): in every group of 3 items in the bag the cheapest is free; prices stay unchanged and it is applied before coupons and the online/advance discount;
-coupons `SALE10` (2 items, ₹2449+, 10% up to ₹200) and `SALE20` (3 items, ₹3699+, 20% up to ₹250); Standard delivery free, Express ₹149.
+Online payment uses two static UPI QR codes (`public/pay/qr1.jpeg`, `qr2.jpeg`) shown alternately per payment attempt.
+Flow: `POST /api/checkout/order` (server re-prices the cart, creates a `PENDING_PAYMENT` order) → checkout shows the QR and the
+exact amount → customer pays in any UPI app and submits the 12-digit UPI transaction ID (`POST /api/payments/submit`) →
+an admin checks the money arrived and clicks **Confirm payment** in `/admin` (`POST /api/admin/orders/[id]/confirm-payment`) →
+order `CONFIRMED`, stock decremented, bag cleared. Transaction IDs are unique, so one ID can't confirm two orders.
 
 ## Routes
 
@@ -68,7 +54,7 @@ coupons `SALE10` (2 items, ₹2449+, 10% up to ₹200) and `SALE20` (3 items, �
 
 ```
 prisma/            schema, migrations, seed
-src/lib/           db, auth (OTP + JWT), cart, catalog, pricing, orders, cashfree, validation, art (SVG product art)
+src/lib/           db, auth (OTP + JWT), cart, catalog, pricing, orders, validation, art (SVG product art)
 src/app/api/       route handlers (auth, cart, coupon, products, search, addresses, checkout, payments, webhooks, admin)
 src/app/(shop)/    pages with full header/footer
 src/app/(flow)/    bag / checkout / account pages with the compact header
@@ -113,10 +99,9 @@ single-environment deploy.
    instance and the `zarilane` web service, and wires `DATABASE_URL` automatically.
 2. Fill in the env vars marked `sync: false` in `render.yaml`: `NEXT_PUBLIC_SITE_URL` (your
    `*.onrender.com` URL, known after the first deploy), `ADMIN_EMAILS`, and either real
-   `CASHFREE_APP_ID`/`CASHFREE_SECRET_KEY` (and `CASHFREE_ENV`), `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_VERIFY_SID`,
-   or leave `PAYMENT_SIMULATOR` at its default `"true"` to use the built-in payment simulator (login needs Twilio in production). `AUTH_SECRET` is generated for you.
+   `SENDGRID_API_KEY`/`SENDGRID_FROM_EMAIL` (or `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_VERIFY_SID`) for login OTP emails,
+   and `ADMIN_EMAILS` (who can confirm payments in `/admin`). `AUTH_SECRET` is generated for you.
 3. Deploy. Seed once from your machine: `DATABASE_URL=<the Render Postgres external URL> npm run seed`.
-4. If using real Cashfree keys, add the webhook pointing at the deployed URL.
 
 (No blueprint? Create the Postgres instance and web service by hand instead — build command
 `npm run build`, start command `npm start` — and set the same env vars.)
@@ -134,5 +119,4 @@ The container runs `prisma migrate deploy` on start; seed once with
 
 ### Before going live
 - Set the Twilio Verify vars and connect SendGrid to the Verify service so OTP emails are delivered.
-- Use live Cashfree keys with `CASHFREE_ENV=production` and remove `PAYMENT_SIMULATOR`.
 - Stock is decremented on confirmation (no reservation during checkout) — see the `ponytail:` note in `src/lib/orders.ts`.

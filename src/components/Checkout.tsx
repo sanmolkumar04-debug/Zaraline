@@ -11,10 +11,10 @@ import { LoginForm } from "./Login";
 import { OffersDrawer, type CouponInfo } from "./Offers";
 import { DotLoader } from "./ProductCard";
 import { http, useStore } from "./Store";
-import { usePayment, type Gateway, type PayOrder } from "./usePayment";
+import { usePayment, type PayOrder } from "./usePayment";
 
 type Ship = { id: string; name: string; eta: string; price: number };
-type Summary = { cart: CartView; shipping: Ship[]; shippingId: string; method: PayMethod; gateway: Gateway };
+type Summary = { cart: CartView; shipping: Ship[]; shippingId: string; method: PayMethod };
 
 const STEPS = ["Login", "Address", "Payment"] as const;
 const ADDR_KEY = "zl_checkout_address";
@@ -75,7 +75,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<{ kind: "err" | "info"; text: string } | null>(null);
   const [offers, setOffers] = useState(false);
-  const { pay, modal } = usePayment(summary?.gateway ?? null);
+  const { pay, modal } = usePayment();
 
   const onAuthError = useCallback((e: unknown) => {
     if ((e as { status?: number }).status === 401) { setUser(null); toast("Your session has expired. Please login again.", "err"); return true; }
@@ -135,8 +135,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
         return;
       }
       const out = await pay({ orderId: r.orderId, number: r.number, payment: r.payment, prefill: r.prefill });
-      if (out.result === "paid") { await refresh(); router.replace(`/orders/${out.orderId}?placed=1`); return; }
-      if (out.result === "failed") { router.push(`/orders/${out.orderId}?payment=failed`); return; }
+      if (out.result === "submitted") { await refresh(); router.replace(`/orders/${out.orderId}?submitted=1`); return; }
       setNotice({ kind: "info", text: "Payment cancelled. Your bag is saved — you can try again whenever you're ready." });
       setPlacing(false);
     } catch (e) {
@@ -244,7 +243,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
                 <h3 className="mb-2 text-[15px] font-bold">Payment Method</h3>
                 <div className="space-y-2">
                   {([
-                    ["ONLINE", "Pay Online", "UPI, Cards, Net Banking & Wallets via Cashfree", "Extra 20% off"],
+                    ["ONLINE", "Pay Online", "Pay by scanning a UPI QR code", "Extra 20% off"],
                     ["PARTIAL", `Pay ${inr(PARTIAL_ADVANCE)} now, rest on delivery`, "Pay a small advance online, balance in cash", "Extra ₹50 off"],
                     ["COD", "Cash on Delivery", "Pay in cash when your order arrives", null],
                   ] as const).map(([m, t, d, badge]) => (
@@ -286,7 +285,7 @@ export function Checkout({ coupons }: { coupons: (CouponInfo & { minAmount: numb
                 <button onClick={place} disabled={placing || !!cart.couponError || cart.items.some((i) => i.qty > i.stock)} className="btn-black h-[48px] w-full text-[16px] normal-case">
                   {placing ? "Processing…" : payLabel}
                 </button>
-                <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-muted"><Icon name="lock" size={12} /> 100% secure payments{summary.gateway.mode === "simulator" ? " · test mode" : ""}</p>
+                <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-muted"><Icon name="lock" size={12} /> 100% secure payments</p>
               </div>
             </div>
           )}

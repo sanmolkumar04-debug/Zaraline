@@ -186,13 +186,13 @@ model Payment {
   id                String   @id @default(cuid())
   orderId           String
   order             Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  provider          String   @default("cashfree")
+  provider          String   @default("upi_qr")
   amount            Int // paise
   status            String // CREATED | PAID | FAILED | CANCELLED
   // @map keeps the original column names so `prisma db push` needs no column rename on existing databases.
   gatewayOrderId    String   @unique @map("razorpayOrderId")
   gatewayPaymentId  String?  @unique @map("razorpayPaymentId")
-  sessionId         String? // Cashfree payment_session_id for opening checkout
+  sessionId         String? // which UPI QR code ("1" | "2") this attempt shows
   error             String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

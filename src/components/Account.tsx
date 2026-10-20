@@ -8,7 +8,7 @@ import { Icon } from "./Icon";
 import { LoginForm } from "./Login";
 import { http, useStore } from "./Store";
 import type { PayOrder } from "./usePayment";
-import { usePayment, type Gateway } from "./usePayment";
+import { usePayment } from "./usePayment";
 
 export function LoginGate() {
   const router = useRouter();
@@ -83,8 +83,8 @@ export function AddressBook({ initial, email }: { initial: Address[]; email: str
   );
 }
 
-export function RetryPayment({ orderId, gateway }: { orderId: string; gateway: Gateway }) {
-  const { pay, modal } = usePayment(gateway);
+export function RetryPayment({ orderId }: { orderId: string }) {
+  const { pay, modal } = usePayment();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const router = useRouter();
@@ -94,15 +94,15 @@ export function RetryPayment({ orderId, gateway }: { orderId: string; gateway: G
     try {
       const r = await http<PayOrder>("/api/payments/retry", { method: "POST", json: { orderId } });
       const out = await pay(r);
-      if (out.result === "paid") { await refresh(); location.replace(`/orders/${orderId}?placed=1`); return; }
-      setMsg(out.result === "cancelled" ? "Payment cancelled." : out.error || "Payment failed. Please try again.");
+      if (out.result === "submitted") { await refresh(); location.replace(`/orders/${orderId}?submitted=1`); return; }
+      setMsg("Payment cancelled.");
       router.refresh();
     } catch (e) { setMsg((e as Error).message); }
     setBusy(false);
   };
   return (
     <>
-      <button onClick={retry} disabled={busy} className="btn-black h-12 w-full max-w-[320px] text-[15px] normal-case">{busy ? "Processing…" : "Retry Payment"}</button>
+      <button onClick={retry} disabled={busy} className="btn-black h-12 w-full max-w-[320px] text-[15px] normal-case">{busy ? "Processing…" : "Pay Now"}</button>
       {msg && <p className="mt-2 text-[13px] text-sale" role="alert">{msg}</p>}
       {modal}
     </>

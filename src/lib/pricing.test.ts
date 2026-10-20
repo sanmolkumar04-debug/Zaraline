@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { totals, couponError, type CouponRule } from "./pricing";
-import { verifySignature, signPayment } from "./cashfree";
 
 const SALE10: CouponRule = { code: "SALE10", kind: "PERCENT", value: 10, maxDiscount: 200, minAmount: 2449, minQty: 2, active: true };
 
@@ -45,22 +44,4 @@ test("buy 2 get 1 free stacks with coupon and online discount", () => {
   assert.equal(t.payment, 150); // 20% of 1800 = 360, capped 150
   assert.equal(t.total, 3000 - 1000 - 200 - 150);
   assert.equal(t.payNow, t.total);
-});
-
-test("simulator payment signature round trip", () => {
-  const sig = signPayment("order_1", "pay_1", "secret");
-  assert.ok(verifySignature("order_1", "pay_1", sig, "secret"));
-  assert.ok(!verifySignature("order_1", "pay_2", sig, "secret"));
-  assert.ok(!verifySignature("order_1", "pay_1", "bad", "secret"));
-});
-
-test("cashfree webhook signature", async () => {
-  const { verifyWebhook } = await import("./cashfree");
-  const crypto = await import("node:crypto");
-  const body = '{"type":"PAYMENT_SUCCESS_WEBHOOK"}';
-  const ts = "1700000000000";
-  const sig = crypto.createHmac("sha256", "cf_secret").update(ts + body).digest("base64");
-  assert.ok(verifyWebhook(body, ts, sig, "cf_secret"));
-  assert.ok(!verifyWebhook(body + " ", ts, sig, "cf_secret"));
-  assert.ok(!verifyWebhook(body, ts, sig, ""));
 });

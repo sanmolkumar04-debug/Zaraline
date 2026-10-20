@@ -45,9 +45,9 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
                     <td className="p-3">{a.name}<br /><span className="text-muted">{o.user.email} · +91 {a.phone} · {a.city}</span></td>
                     <td className="p-3">{o.items.map((i) => <div key={i.id}>{i.qty} × {i.name} ({i.size})</div>)}</td>
                     <td className="p-3 font-semibold">{inr(o.total)}</td>
-                    <td className="p-3">{o.paymentMethod}<br /><span className="text-muted">{o.payments[0] ? `${o.payments[0].status} ${o.payments[0].gatewayPaymentId ?? ""}` : "—"}</span></td>
+                    <td className="p-3">{o.paymentMethod}<br /><span className="text-muted">{o.payments[0] ? `${o.payments[0].status} ${o.payments[0].gatewayPaymentId ? "UPI ref " + o.payments[0].gatewayPaymentId : "(no ref yet)"}` : "—"}</span></td>
                     <td className="p-3 font-semibold">{STATUS_LABEL[o.status] ?? o.status}</td>
-                    <td className="p-3"><AdminStatus id={o.id} next={NEXT_STATUS[o.status] ?? []} /></td>
+                    <td className="p-3"><AdminStatus id={o.id} next={NEXT_STATUS[o.status] ?? []} confirmPayment={o.status === "PENDING_PAYMENT" && !!o.payments[0]?.gatewayPaymentId} /></td>
                   </tr>
                 );
               })}

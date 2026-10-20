@@ -24,7 +24,7 @@ export const POLICIES: Record<string, { title: string; blocks: Block[] }> = {
     blocks: [
       { p: ["By accessing zarilane.in and placing an order you agree to these terms. Please read them carefully."] },
       { h: "Orders & pricing", ul: ["All prices are in Indian Rupees and inclusive of applicable taxes.", "We may cancel an order if a product is out of stock or a pricing error occurs; any amount paid will be refunded in full.", "Offers and coupons are subject to their stated conditions and cannot be combined unless mentioned."] },
-      { h: "Payments", ul: ["Online payments are processed securely by Cashfree. We never store your card or bank details.", "Cash on Delivery orders must be paid in full at the time of delivery."] },
+      { h: "Payments", ul: ["Online payments are made by scanning our UPI QR code. We never ask for or store your card or bank details, and we confirm each payment manually.", "Cash on Delivery orders must be paid in full at the time of delivery."] },
       { h: "Product images", p: ["Colours may vary slightly from images due to screen settings and photography lighting."] },
       { h: "Governing law", p: ["These terms are governed by the laws of India, and courts at Surat, Gujarat shall have exclusive jurisdiction."] },
     ],
@@ -33,7 +33,7 @@ export const POLICIES: Record<string, { title: string; blocks: Block[] }> = {
     title: "Privacy Policy",
     blocks: [
       { p: ["Your privacy matters to us. This policy explains what we collect and why."] },
-      { h: "What we collect", ul: ["Your mobile number to log you in with an OTP.", "Delivery addresses you save, to ship your orders.", "Order and payment status (payment details are handled by Cashfree and never stored by us)."] },
+      { h: "What we collect", ul: ["Your mobile number to log you in with an OTP.", "Delivery addresses you save, to ship your orders.", "Order and payment status (we only keep the UPI transaction ID you submit)."] },
       { h: "How we use it", ul: ["To process, ship and support your orders.", "To send order updates on WhatsApp/SMS.", "We do not sell your personal data to anyone."] },
       { h: "Your choices", p: ["You can edit or delete saved addresses from your account at any time. To delete your account, message us on WhatsApp."] },
     ],
